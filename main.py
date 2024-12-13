@@ -3,18 +3,22 @@ from PyQt5.QtWidgets import QApplication
 from Login import Login_Window
 from user_window import UserWindow
 from admin_window import AdminWindow
-# from signup import SignUp_Window
+from database import db
+from signup import SignUpWindow
 
 
 def main():
 
     app = QApplication(sys.argv)
     
-  
-    admin_window = AdminWindow()
-    user_window = UserWindow()
-    # singup_window = SignUp_Window()
 
+    
+    def open_login_window():
+        login_window.show()
+
+    admin_window = AdminWindow(db)
+    user_window = UserWindow()
+    singup_window = SignUpWindow(open_login_window)
 
     def open_admin_window():
         admin_window.show()
@@ -23,7 +27,7 @@ def main():
         user_window.show()
 
     def open_signup_window():
-        user_window.show()
+        singup_window.show()
 
     login_window = Login_Window(open_admin_window, open_user_window, open_signup_window)
     login_window.show()
@@ -33,14 +37,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-# if __name__ == "__main__":
-#     import sys
-
-#     app = QtWidgets.QApplication(sys.argv)
-#     MainWindow = QtWidgets.QMainWindow()
-#     ui = Ui_MainWindow()
-#     ui.setupUi(MainWindow)
-#     MainWindow.show()  
-#     sys.exit(app.exec_())
 

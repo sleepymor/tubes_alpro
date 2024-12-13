@@ -1,332 +1,190 @@
-import sys
-from database import cursor, mc, db
+import os
+import shutil
 from PyQt5.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QMessageBox,
-    QLabel,
-    QTableWidget,
-    QTableWidgetItem,
-    QVBoxLayout,
-    QHBoxLayout,
-    QWidget,
-    QPushButton,
-    QLineEdit,
-    QFormLayout,
-    QDialog,
-    QComboBox,
-    QCheckBox,
-    QGridLayout,
-    QSlider,
+    QApplication, QMainWindow, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QPushButton, QComboBox, QCheckBox, QDialog,
+    QLabel, QLineEdit, QFormLayout, QHBoxLayout, QWidget,
+    QFileDialog, QFrame
 )
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QPixmap
+import mysql.connector
 
 
-class AddRecordDialog(QDialog):
-    def __init__(self, regions, scales, data=None, parent=None,):
-        super().__init__(parent)
-        self.setWindowTitle("Add/Edit Record")
-        self.values = {}
-        self.data = data  # Data for editing
+def connect_to_database():
+    """Connect to the MySQL database."""
+    return mysql.connector.connect(
+        host="localhost",
+        user="root",  
+        password="",  
+        database="apv"  
+    )
 
-        # Layout for form
-        form_layout = QFormLayout()
 
-        # Input fields
+class AddVendorDialog(QDialog):
+    def __init__(self, db, refresh_table_callback):
+        super().__init__()
+        self.setWindowTitle("Add Vendor")
+        self.db = db
+        self.refresh_table_callback = refresh_table_callback
+        self.logo_path = None  # To store the path of the selected or dropped logo
+
+        # Form Layout
+        self.form_layout = QFormLayout()
+        self.setLayout(self.form_layout)
+
+        # Name Input
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Enter Name")
-        form_layout.addRow("Name:", self.name_input)
+        self.form_layout.addRow("Name:", self.name_input)
+
+        # Region Dropdown
+        self.region_dropdown = QComboBox()
+        self.populate_regions()
+        self.form_layout.addRow("Region:", self.region_dropdown)
+
+        # Scale Checkboxes
+        self.scale_layout = QVBoxLayout()
+        self.scale_checkboxes = []
+        self.populate_scales()
+        self.form_layout.addRow("Scales:", self.scale_layout)
+
+        # Min and Max Price
+        self.min_price_input = QLineEdit()
+        self.max_price_input = QLineEdit()
+        self.form_layout.addRow("Min Price:", self.min_price_input)
+        self.form_layout.addRow("Max Price:", self.max_price_input)
+
+        # Website and Number
+        self.website_input = QLineEdit()
+        self.form_layout.addRow("Website:", self.website_input)
 
         self.number_input = QLineEdit()
-        self.number_input.setPlaceholderText("Enter Number")
-        form_layout.addRow("Number:", self.number_input)
+        self.form_layout.addRow("Number:", self.number_input)
 
-        self.website_input = QLineEdit()
-        self.website_input.setPlaceholderText("Enter Website")
-        form_layout.addRow("Website:", self.website_input)
-
-        self.logo_input = QLineEdit()
-        self.logo_input.setPlaceholderText("Enter Logo URL")
-        form_layout.addRow("Logo:", self.logo_input)
-
+        # Address Input
         self.address_input = QLineEdit()
-        self.address_input.setPlaceholderText("Enter Address")
-        form_layout.addRow("Address:", self.address_input)
+        self.form_layout.addRow("Address:", self.address_input)
 
-        # Dropdown for Region
-        self.region_dropdown = QComboBox()
-        self.region_dropdown.addItems(regions)
-        form_layout.addRow("Region:", self.region_dropdown)
+        # Logo Drag-and-Drop Area
+        self.logo_frame = QLabel("Drag & Drop Logo Here\nor Browse", self)
+        self.logo_frame.setFrameStyle(QFrame.Box | QFrame.Plain)
+        self.logo_frame.setAlignment(Qt.AlignCenter)
+        self.logo_frame.setAcceptDrops(True)
+        self.form_layout.addRow("Logo:", self.logo_frame)
 
-        # Checkboxes for Scale
-        self.scale_checkboxes = []
-        scale_layout = QGridLayout()
-        for i, scale in enumerate(scales):
-            checkbox = QCheckBox(scale)
+        # Browse Button for Logo
+        self.browse_button = QPushButton("Browse")
+        self.browse_button.clicked.connect(self.browse_logo)
+        self.form_layout.addWidget(self.browse_button)
+
+        # Add Vendor Button
+        self.add_button = QPushButton("Add Vendor")
+        self.add_button.clicked.connect(self.add_vendor)
+        self.form_layout.addRow(self.add_button)
+
+    def populate_regions(self):
+        """Populate the region dropdown with data from the database."""
+        cursor = self.db.cursor()
+        cursor.execute("SELECT ID, Region FROM region")
+        for row in cursor.fetchall():
+            self.region_dropdown.addItem(row[1], row[0])
+
+    def populate_scales(self):
+        """Populate checkboxes with scale data."""
+        cursor = self.db.cursor()
+        cursor.execute("SELECT ID, Scale FROM scale")
+        for row in cursor.fetchall():
+            checkbox = QCheckBox(row[1])
+            checkbox.setProperty("ScaleID", row[0])
+            self.scale_layout.addWidget(checkbox)
             self.scale_checkboxes.append(checkbox)
-            scale_layout.addWidget(checkbox, i // 3, i % 3)  # 3 checkboxes per row
 
-        scale_widget = QWidget()
-        scale_widget.setLayout(scale_layout)
-        form_layout.addRow("Scale:", scale_widget)
+    def browse_logo(self):
+        """Open a file dialog to select a logo."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Logo", "", "Image Files (*.png *.jpg *.jpeg *.bmp)")
+        if file_path:
+            self.logo_path = file_path
+            pixmap = QPixmap(file_path)
+            self.logo_frame.setPixmap(pixmap.scaled(100, 100, Qt.KeepAspectRatio))
 
-        # Price Range Sliders (Min and Max)
-        self.min_price_slider = QSlider(Qt.Horizontal)
-        self.min_price_slider.setMinimum(1)
-        self.min_price_slider.setMaximum(10000)
-        self.min_price_slider.setValue(100)
-        self.min_price_slider.valueChanged.connect(self.update_price_label)
+    def add_vendor(self):
+        """Insert a new vendor into the database."""
+        name = self.name_input.text()
+        region_id = self.region_dropdown.currentData()
+        min_price = self.min_price_input.text()
+        max_price = self.max_price_input.text()
+        website = self.website_input.text()
+        number = self.number_input.text()
+        address = self.address_input.text()
+        scales = [cb.property("ScaleID") for cb in self.scale_checkboxes if cb.isChecked()]
 
-        self.max_price_slider = QSlider(Qt.Horizontal)
-        self.max_price_slider.setMinimum(1)
-        self.max_price_slider.setMaximum(10000)
-        self.max_price_slider.setValue(1000)
-        self.max_price_slider.valueChanged.connect(self.update_price_label)
+        # Save logo to /vendor_logo/
+        logo_filename = None
+        if self.logo_path:
+            os.makedirs("vendor_logo", exist_ok=True)
+            logo_filename = os.path.basename(self.logo_path)
+            shutil.copy(self.logo_path, f"vendor_logo/{logo_filename}")
 
-        self.price_label = QLabel("Price Range: Rp 10 juta - Rp 100 juta")
-        form_layout.addRow("Price Range:", self.price_label)
-        form_layout.addRow("Minimum:", self.min_price_slider)
-        form_layout.addRow("Maximum:", self.max_price_slider)
+        # Insert vendor data into the database
+        cursor = self.db.cursor()
+        cursor.execute("""
+            INSERT INTO vendor (RegionID, Name, MinPrice, MaxPrice, Website, Number, Address, Logo)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (region_id, name, min_price, max_price, website, number, address, logo_filename))
+        vendor_id = cursor.lastrowid
 
-        # Add buttons
-        button_layout = QHBoxLayout()
-        save_button = QPushButton("Save")
-        save_button.clicked.connect(self.save_record)
-        cancel_button = QPushButton("Cancel")
-        cancel_button.clicked.connect(self.reject)
-        button_layout.addWidget(save_button)
-        button_layout.addWidget(cancel_button)
+        # Insert vendor scales into the database
+        for scale_id in scales:
+            cursor.execute("INSERT INTO vendorscale (VendorID, ScaleID) VALUES (%s, %s)", (vendor_id, scale_id))
 
-        # Set main layout
-        main_layout = QVBoxLayout()
-        main_layout.addLayout(form_layout)
-        main_layout.addLayout(button_layout)
-        self.setLayout(main_layout)
-
-        # Populate fields if editing
-        if self.data:
-            self.populate_fields()
-
-    def update_price_label(self):
-        min_value = self.min_price_slider.value()
-        max_value = self.max_price_slider.value()
-        min_price = min_value * 100000
-        max_price = max_value * 100000
-        self.price_label.setText(
-            f"Price Range: {self.format_price(min_price)} - {self.format_price(max_price)}"
-        )
-
-    @staticmethod
-    def format_price(value):
-        if value >= 1_000_000_000:
-            return f"Rp {value // 1_000_000_000} miliar"
-        elif value >= 1_000_000:
-            return f"Rp {value // 1_000_000} juta"
-        else:
-            return f"Rp {value // 1000} ribu"
-
-    def populate_fields(self):
-        self.name_input.setText(self.data["Name"])
-        self.number_input.setText(self.data["Number"])
-        self.website_input.setText(self.data["Website"])
-        self.logo_input.setText(self.data["Logo"])
-        self.address_input.setText(self.data["Address"])
-        self.region_dropdown.setCurrentText(self.data["Region"])
-
-        selected_scales = self.data["Scale"].split(", ")
-        for checkbox in self.scale_checkboxes:
-            if checkbox.text() in selected_scales:
-                checkbox.setChecked(True)
-
-        min_price, max_price = self.data["Price Range"].split(" - ")
-        self.min_price_slider.setValue(
-            int(min_price.replace("Rp ", "").replace(" juta", "").replace(" ", "")) * 10
-        )
-        self.max_price_slider.setValue(
-            int(max_price.replace("Rp ", "").replace(" juta", "").replace(" ", "")) * 10
-        )
-
-    def save_record(self):
-        self.values["Name"] = self.name_input.text()
-        self.values["Number"] = self.number_input.text()
-        self.values["Website"] = self.website_input.text()
-        self.values["Logo"] = self.logo_input.text()
-        self.values["Address"] = self.address_input.text()
-        self.values["Region"] = self.region_dropdown.currentText()
-        self.values["Scale"] = ", ".join(
-            checkbox.text() for checkbox in self.scale_checkboxes if checkbox.isChecked()
-        )
-        self.values["Price Range"] = self.price_label.text().split(":")[1].strip()
-
-        if not all(self.values.values()):
-            QMessageBox.warning(self, "Warning", "All fields must be filled!")
-            return
-
+        self.db.commit()
+        self.refresh_table_callback()
         self.accept()
 
 
 class AdminWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, db):
         super().__init__()
-        self.setWindowTitle("Admin Dashboard")
-        self.setGeometry(100, 100, 1000, 600)
+        self.setWindowTitle("Vendor Management")
+        self.db = db
 
-        self.headers = [
-            "Select",
-            "Name",
-            "Number",
-            "Website",
-            "Logo",
-            "Address",
-            "Region",
-            "Scale",
-            "Price Range",
-        ]
+        # Main Layout
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.layout = QVBoxLayout()
+        self.central_widget.setLayout(self.layout)
 
-        self.regions = ["North", "South", "East", "West"]
-        self.scales = ["Small", "Medium", "Large"]
+        # Add Vendor Button
+        self.add_vendor_button = QPushButton("Add Vendor")
+        self.add_vendor_button.clicked.connect(self.open_add_vendor_dialog)
+        self.layout.addWidget(self.add_vendor_button)
 
-        self.initUI()
+        # Vendor Table
+        self.vendor_table = QTableWidget()
+        self.vendor_table.setColumnCount(6)
+        self.vendor_table.setHorizontalHeaderLabels(["Name", "Region", "Min Price", "Max Price", "Website", "Logo"])
+        self.layout.addWidget(self.vendor_table)
 
-    def initUI(self):
-        central_widget = QWidget(self)
-        layout = QVBoxLayout(central_widget)
+        self.load_vendors()
 
-        label = QLabel("Admin Dashboard")
-        label.setStyleSheet("font-size: 24px; font-weight: bold; text-align: center;")
-        layout.addWidget(label)
+    def open_add_vendor_dialog(self):
+        dialog = AddVendorDialog(self.db, self.load_vendors)
+        dialog.exec_()
 
-        self.table_widget = QTableWidget()
-        self.table_widget.setColumnCount(len(self.headers))
-        self.table_widget.setHorizontalHeaderLabels(self.headers)
-        layout.addWidget(self.table_widget)
+    def load_vendors(self):
+        """Load vendor data into the table."""
+        cursor = self.db.cursor()
+        cursor.execute("""
+            SELECT vendor.Name, region.Region, vendor.MinPrice, vendor.MaxPrice, vendor.Website, vendor.Logo
+            FROM vendor
+            JOIN region ON vendor.RegionID = region.ID
+        """)
+        rows = cursor.fetchall()
 
-        button_layout = QHBoxLayout()
-        add_button = QPushButton("Add")
-        add_button.clicked.connect(self.add_record)
-        edit_button = QPushButton("Edit")
-        edit_button.clicked.connect(self.edit_record)
-        delete_button = QPushButton("Delete")
-        delete_button.clicked.connect(self.delete_record)
-        button_layout.addWidget(add_button)
-        button_layout.addWidget(edit_button)
-        button_layout.addWidget(delete_button)
-        layout.addLayout(button_layout)
+        self.vendor_table.setRowCount(len(rows))
+        for row_idx, row in enumerate(rows):
+            for col_idx, item in enumerate(row):
+                if col_idx == 5:  # Display logo path as a placeholder
+                    item = "vendor_logo/" + item if item else "No Logo"
+                self.vendor_table.setItem(row_idx, col_idx, QTableWidgetItem(str(item)))
 
-        self.setCentralWidget(central_widget)
-
-        # Display data
-        self.display_vendors()
-
-    def add_record(self):
-            dialog = AddRecordDialog(self.regions, self.scales, parent=self)
-            if dialog.exec_() == QDialog.Accepted:
-                values = dialog.values
-
-                try:
-                    region_id = self.regions.index(values["Region"]) + 1
-                    scale_ids = [self.scales.index(scale) + 1 for scale in values["Scale"].split(", ")]
-
-                    min_price, max_price = map(
-                        lambda p: int(p.replace("Rp ", "").replace(" juta", "").replace(" ", "")) * 1_000_000,
-                        values["Price Range"].split(" - "),
-                    )
-
-                    cursor.execute(
-                        "INSERT INTO vendor (Name, Number, Website, Logo, Address, MaxPrice, MinPrice, RegionID) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                        (
-                            values["Name"],
-                            values["Number"],
-                            values["Website"],
-                            values["Logo"],
-                            values["Address"],
-                            max_price,
-                            min_price,
-                            region_id,
-                        ),
-                    )
-                    vendor_id = cursor.lastrowid
-
-                    for scale_id in scale_ids:
-                        cursor.execute(
-                            "INSERT INTO vendorscale (VendorID, ScaleID) VALUES (%s, %s)",
-                            (vendor_id, scale_id),
-                        )
-
-                    db.commit()
-                    QMessageBox.information(self, "Success", "Vendor successfully added.")
-                    row_position = self.table_widget.rowCount()
-                    self.table_widget.insertRow(row_position)
-                    for col, header in enumerate(self.headers):
-                        self.table_widget.setItem(row_position, col, QTableWidgetItem(values[header]))
-
-                except Exception as err:
-                    QMessageBox.critical(self, "Error", f"Error: {err}")
-                    db.rollback()
-
-
-    def edit_record(self):
-        selected_row = self.table_widget.currentRow()
-        if selected_row < 0:
-            return
-
-        data = {
-            self.headers[col]: self.table_widget.item(selected_row, col).text()
-            for col in range(1, self.table_widget.columnCount())
-        }
-
-        dialog = AddRecordDialog(self.regions, self.scales, data=data, parent=self)
-        if dialog.exec_() == QDialog.Accepted:
-            for col, header in enumerate(self.headers[1:], start=1):
-                value = dialog.values[header]
-                self.table_widget.setItem(selected_row, col, QTableWidgetItem(value))
-
-    def delete_record(self):
-        selected_row = self.table_widget.currentRow()
-        if selected_row >= 0:
-            self.table_widget.removeRow(selected_row)
-
-
-    def display_vendors(self):
-        query = """
-            SELECT 
-                v.Name, v.Number, v.Website, v.Logo, v.Address, 
-                r.Region AS RegionName,
-                GROUP_CONCAT(s.Scale SEPARATOR ', ') AS ScaleNames,
-                CONCAT('Rp ', FORMAT(v.MinPrice, 0), ' - Rp ', FORMAT(v.MaxPrice, 0)) AS PriceRange
-            FROM 
-                vendor v
-            JOIN 
-                region r ON v.RegionID = r.ID
-            LEFT JOIN 
-                vendorscale vs ON v.ID = vs.VendorID
-            LEFT JOIN 
-                scale s ON vs.ScaleID = s.ID
-            GROUP BY 
-                v.ID;
-        """
-        try:
-            cursor.execute(query)
-            vendors = cursor.fetchall()
-
-            # Reset table
-            self.table_widget.setRowCount(0)
-            self.table_widget.setColumnCount(len(self.headers))
-            self.table_widget.setHorizontalHeaderLabels(self.headers)
-
-            # Populate table with data
-            for row_number, vendor in enumerate(vendors):
-                self.table_widget.insertRow(row_number)
-                for column_number, data in enumerate(vendor):
-                    item = QTableWidgetItem(str(data))
-                    self.table_widget.setItem(row_number, column_number + 1, item)
-        except mc.Error as err:
-            QMessageBox.critical(self, "Error", f"Database error: {err}")
-
-    
-if __name__ == "__main__":
-  app = QApplication(sys.argv)
-  window = AdminWindow()
-  window.show()
-  sys.exit(app.exec_())

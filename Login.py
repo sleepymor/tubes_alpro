@@ -186,7 +186,7 @@ class Login_Window(QtWidgets.QMainWindow):
             print(f"Error: {e}")
 
     def signup(self):
-        QtWidgets.QMessageBox.information(self, "Success", "Silahkan")
+        self.open_signup_window()
 
 
 # if __name__ == "__main__":
